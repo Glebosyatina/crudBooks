@@ -7,6 +7,8 @@ import (
     _ "github.com/lib/pq"
     "encoding/json"
     "strconv"
+
+    "test/pkg/db"
 )
 
 type Book struct{
@@ -15,23 +17,37 @@ type Book struct{
     Author string`json:"author"`
 }
 
+type Handler struct{
+	DB *sql.DB
+}
+
 func Run(){
-    
-    http.HandleFunc("/books", getListBooks)
-    http.HandleFunc("/books/add", addBook)
-    http.HandleFunc("/books/delete", deleteBook)
-    http.HandleFunc("/books/update", updateBook)
+	//создали подключение к бд и обработчик(структуру с полем хранящим коннект и методами для обработки запросов
+    db_conn := db.Connect()
+    h := New(db_conn)
+
+
+    http.HandleFunc("/books", h.getListBooks)
+    http.HandleFunc("/books/add", h.addBook)
+    http.HandleFunc("/books/delete", h.deleteBook)
+    http.HandleFunc("/books/update", h.updateBook)
 
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
        fmt.Fprintf(w, "Hello") 
     })
 
+    fmt.Println("Сервер запущен на 6759 порту") 
     http.ListenAndServe(":6759", nil)
+
+    db.CloseConnection(db_conn)
 }
 
-
+//создание обработчика с коннектом к бд
+func New(db *sql.DB) Handler{
+	return Handler{db}
+}
 //return books in json array [{},{}]
-func getListBooks(w http.ResponseWriter, r *http.Request){
+func (h *Handler) getListBooks(w http.ResponseWriter, r *http.Request){
 //    fmt.Fprintf(w, "Hello %q", html.EscapeString(r.URL.Path))
     if r.Method != http.MethodGet{
         w.WriteHeader(http.StatusMethodNotAllowed)
@@ -40,14 +56,8 @@ func getListBooks(w http.ResponseWriter, r *http.Request){
     }
 
     books := []Book{}
-    connStr := "user=postgres password=postgres dbname=library sslmode=disable"
-    db, err := sql.Open("postgres", connStr)
-    if err != nil{
-        panic(err)
-    }
-    defer db.Close()
 
-    rows, err := db.Query("SELECT * FROM books")
+    rows, err := h.DB.Query("SELECT * FROM books")
     if err != nil{
         panic(err)
     }
@@ -69,7 +79,7 @@ func getListBooks(w http.ResponseWriter, r *http.Request){
 }
 
 //add book from request json body
-func addBook(w http.ResponseWriter, r *http.Request){
+func (h *Handler) addBook(w http.ResponseWriter, r *http.Request){
     if r.Method != http.MethodPost{
         w.WriteHeader(http.StatusMethodNotAllowed)
         fmt.Fprint(w, "Method not allowed")
@@ -84,12 +94,7 @@ func addBook(w http.ResponseWriter, r *http.Request){
 
     fmt.Println(b)
     //пишем в бд
-    connStr := "user=postgres password=postgres dbname=library sslmode=disable"
-    db, err := sql.Open("postgres", connStr)
-    if err != nil { panic(err) }
-    defer db.Close()
-
-    res, err := db.Exec("INSERT INTO books (name, author) VALUES ($1, $2)", b.Name, b.Author)
+    res, err := h.DB.Exec("INSERT INTO books (name, author) VALUES ($1, $2)", b.Name, b.Author)
     if err != nil { panic(err) }
 
     fmt.Println(res.RowsAffected())
@@ -97,7 +102,7 @@ func addBook(w http.ResponseWriter, r *http.Request){
 }
 
 //delete book by id in url &id=someid
-func deleteBook(w http.ResponseWriter, r *http.Request){
+func (h *Handler) deleteBook(w http.ResponseWriter, r *http.Request){
     if r.Method != http.MethodDelete{
         w.WriteHeader(http.StatusMethodNotAllowed)
         fmt.Fprint(w, "Method not allowed")
@@ -108,25 +113,21 @@ func deleteBook(w http.ResponseWriter, r *http.Request){
        http.NotFound(w, r)
        return 
    }
-    connStr := "user=postgres password=postgres dbname=library sslmode=disable"
-    db, err := sql.Open("postgres", connStr)
-    if err != nil { panic(err) }
-    defer db.Close()
 
-    res, err := db.Exec("DELETE FROM books WHERE id=$1", id)
+    res, err := h.DB.Exec("DELETE FROM books WHERE id=$1", id)
     if err != nil { panic(err) }
     fmt.Println(res.RowsAffected())
 }
 
 //update information about book by id in url and json body
-func updateBook(w http.ResponseWriter, r *http.Request){
+func (h *Handler)updateBook(w http.ResponseWriter, r *http.Request){
     if r.Method != http.MethodPut{
         w.WriteHeader(http.StatusMethodNotAllowed)
         fmt.Fprint(w, "Method not allowed")
         return
     }
    //получили id из url
-   id, err := strconv.Atoi(r.URL.Query().Get("id"))
+    id, err := strconv.Atoi(r.URL.Query().Get("id"))
     if err != nil { panic(err) }
    //распарсили тело запроса
     b := Book{}
@@ -134,12 +135,6 @@ func updateBook(w http.ResponseWriter, r *http.Request){
     if err != nil { panic(err) }
      
     //подключаемся к бд и меняем запись о книге
-    connStr := "user=postgres password=postgres dbname=library sslmode=disable"
-    db, err := sql.Open("postgres", connStr)
-    if err != nil {
-        panic(err)
-    }
-    
-    res, err := db.Exec("UPDATE books SET name=$1, author=$2 WHERE id=$3", b.Name, b.Author, id)
+    res, err := h.DB.Exec("UPDATE books SET name=$1, author=$2 WHERE id=$3", b.Name, b.Author, id)
     fmt.Println(res.RowsAffected())
 }
